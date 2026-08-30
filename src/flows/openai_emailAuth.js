@@ -29,7 +29,7 @@ async function performLoginWithBasicAuth(page) {
 
   // Fill in the email field
   console.log('Filling in email address...');
-  const emailField = page.locator('input[name="email"]');
+  const emailField = page.locator('input[type="email"]');
   await emailField.fill(process.env.OPENAI_EMAIL);
 
   // Submit email to proceed to the password prompt
@@ -38,7 +38,7 @@ async function performLoginWithBasicAuth(page) {
 
   // Fill in the password field
   console.log('Filling in password...');
-  const passwordField = page.locator('input[name="password"]');
+  const passwordField = page.locator('input[type="password"]');
   await passwordField.fill(process.env.OPENAI_PASSWORD);
 
   // Finalize login by clicking the continue button

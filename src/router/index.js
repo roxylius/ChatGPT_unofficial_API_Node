@@ -3,7 +3,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 
 //express routers to handle route
-const promptRouter = require('./src/router/prompt');
+const promptRouter = require('./openai');
 
 const app = express();
 
@@ -13,7 +13,7 @@ app.use(bodyParser.urlencoded({ extended: true })); //to read the post request f
 app.use(express.json()); //to interpret json
 
 //Routes
-app.use('/api/prompt',promptRouter);
+app.use('/api/openai/',promptRouter);
 
 
 app.get('/',(req,res) => {

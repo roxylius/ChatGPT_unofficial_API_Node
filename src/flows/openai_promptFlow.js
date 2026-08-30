@@ -1,6 +1,6 @@
 // src/flows/prompt-flow.js
 // Contains the logic for sending prompts to ChatGPT with optional modes
-const { waitForTimeout, htmlResponseToText } = require("../utils/helpers");
+const { waitForTimeout, htmlResponseToText, isChatGPTLoggedIn } = require("../utils/helpers");
 const {getLogger} = require('../utils/logger');
 
 const logger = getLogger('prompt-flow.js'); //get logger object
@@ -23,9 +23,9 @@ async function promptWithOptions(page, options, prompt) {
     logger.debug('promptWithOptions',`🌐 Loading URL: ${url}`);
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120_000  }); //wait for DOM to load for a 120sec
 
-    // Toggle modes if requested
-    logger.debug('promptWithOptions','☰ Toggle Prompt tools...');
-    await page.locator('button::-p-aria(Choose tool)').click();
+    // // Toggle modes if requested
+    // logger.debug('promptWithOptions','☰ Toggle Prompt tools...');
+    // await page.locator('button::-p-aria(Choose tool)').click();
     
     if (reason) {
         logger.debug('promptWithOptions','🔍 Enabling Reason mode...');
@@ -53,46 +53,56 @@ async function promptWithOptions(page, options, prompt) {
     await editor.type(promptContext + prompt);
     await editor.press('Enter');
 
-    // Grab the latest article ID
-    logger.debug('promptWithOptions','⏳ Waiting briefly for response container to appear…');
-    await waitForTimeout(1000);
-    const ids = await page.$$eval('article', els => els.map(a => a.dataset.testid));
-    const latestId = ids.pop();
-    const mdSelector = `article[data-testid="${latestId}"] div[data-message-author-role="assistant"] div.markdown`;
+// Grab the latest assistant response
+logger.debug('promptWithOptions','⏳ Waiting for response container to appear…');
 
-    // Ensure the .markdown div exists
-    await page.waitForSelector(mdSelector, { timeout: 600_000 }); //wait to response container for 10 minutes or 600 secs
+const assistantSelector = 'div[data-message-author-role="assistant"] div.markdown';
+const beforeCount = await page.$$eval(assistantSelector, els => els.length);
 
-    // Poll until the text stops changing
-    logger.debug('promptWithOptions','🕒 Polling response until stable…');
-    let previous = '';
-    let finalText = null;
+await page.waitForFunction(
+    (selector, oldCount) => document.querySelectorAll(selector).length > oldCount,
+    { timeout: 600_000 },
+    assistantSelector,
+    beforeCount
+);
 
-    const POLL_LIMIT = reason ? 600 : 300; // if reason mode poll for 10min else poll for 5min
+const assistantMessages = await page.$$(assistantSelector);
+const handle = assistantMessages[assistantMessages.length - 1];
 
-    for (let i = 0; i < POLL_LIMIT; i++) { //polls up to POLL_LIMIT to account for streaming response
+// Poll until the text stops changing
+logger.debug('promptWithOptions','🕒 Polling response until stable…');
 
-        //get text content from the response container
-        const handle = await page.$(mdSelector);
-        const text = handle
-            ? await handle.evaluate(el => el.innerText.trim())
-            : '';
+let previous = '';
+let finalText = null;
+let stableCount = 0;
 
-        //not logger.debug to prevent polluting log file
-        console.log('promptWithOptions: ',`🕒 Poll #${i + 1}: ${text ? text.slice(0, 50) + '…' : '[empty]'}`);
+const POLL_LIMIT = reason ? 600 : 300; // if reason mode poll for 10min else poll for 5min
 
-        if (text && text === previous) { //break the polling if the entire response is returned
+for (let i = 0; i < POLL_LIMIT; i++) {
+
+    const text = handle ? await handle.evaluate(el => el.innerText.trim()) : '';
+    console.log('promptWithOptions: ',`🕒 Poll #${i + 1}: ${text ? text.slice(0, 50) + '…' : '[empty]'}`);
+
+    if (text && text === previous) {
+        stableCount++;
+
+        if (stableCount >= 2) {
             finalText = text;
             break;
         }
-        previous = text;
-        await waitForTimeout(3000); // wait for 3sec before polling the next time
-    }
 
-    if (finalText === null) {
-        logger.warn('promptWithOptions','⚠️ Response never stabilized; returning last received text (if any).');
-        finalText = previous || null;  // empty string becomes null
+    } else {
+        stableCount = 0;
     }
+    previous = text;
+
+    await waitForTimeout(3000); // wait for 3sec before polling the next time
+}
+
+if (finalText === null) {
+    logger.warn('promptWithOptions','⚠️ Response never stabilized; returning last received text (if any).');
+    finalText = previous || null; // empty string becomes null
+}
 
     // parse text from html content
     const cleaned = htmlResponseToText(finalText);

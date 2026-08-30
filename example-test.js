@@ -1,119 +1,133 @@
 // index.js
-// Entry point for ChatGPT automation: launches a persistent browser session,
-// checks authentication, and runs a login flow if needed.
 
-require('dotenv').config(); // Load environment variables from .env file (if any)
-
-const path = require('path');
+// --- Enhanced Imports ---
+// Use puppeteer-extra to add plugins and avoid bot detection
 const puppeteer = require('puppeteer-extra');
+// Import the stealth plugin to make browser automation less detectable
 const StealthPlugin = require('puppeteer-extra-plugin-stealth');
-const { performLoginWithBasicAuth } = require('./src/flows/basic-login.js');
-const { isChatGPTLoggedIn } = require('./src/utils/helpers.js');
-const { promptWithOptions } = require('./src/flows/prompt-flow.js');
+// Standard Node.js modules for file system and CSV parsing
+const fs = require('fs');
+const csv = require('csv-parser');
+const { format } = require('@fast-csv/format');
 
-// Apply stealth plugin to evade bot detection (mimics human-like browser features)
+// Apply the stealth plugin to puppeteer
 puppeteer.use(StealthPlugin());
 
+// --- Configuration ---
+// Path to your input CSV file
+const INPUT_CSV_PATH = 'LEADS NUMBER CORRECTION.xlsx - Sheet1.csv';
+// Path for the output CSV file that will be created
+const OUTPUT_CSV_PATH = 'updated_leads.csv';
+// The selector to find the phone number on the Google Maps page.
+const PHONE_NUMBER_SELECTOR = "button[data-item-id^='phone']";
+// --- End of Configuration ---
+
+
 /**
- * Main automation routine:
- * 1. Launches Chrome with a persistent user-data directory.
- * 2. Opens ChatGPT and checks login status.
- * 3. Executes login flow only if necessary.
+ * Scrapes the phone number from a given Google Maps URL.
+ * @param {puppeteer.Browser} browser - The Puppeteer browser instance.
+ * @param {string} url - The Google Maps URL to scrape.
+ * @returns {Promise<string>} The scraped phone number, or 'Not Found' if it couldn't be retrieved.
  */
-async function openGPT() {
-    let browser;
+async function scrapePhoneNumber(browser, url) {
+    if (!url || !url.startsWith('http')) {
+        console.log(`Invalid or missing URL: "${url}". Skipping.`);
+        return 'Invalid URL';
+    }
+
     let page;
-
     try {
-        console.log('▶️ Launching browser with persistent profile…');
-
-        // -------------------------------------------------------------------------
-        // 1) Configure persistent user data
-        //
-        // We point Puppeteer at a local folder ('chrome-user-data') so that cookies,
-        // localStorage, and sessionStorage persist between runs. This prevents
-        // a fresh/incognito profile on every start.
-        // -------------------------------------------------------------------------
-        const userDataDir = path.join(__dirname, 'chrome-user-data');
-
-        // -------------------------------------------------------------------------
-        // 2) Launch Puppeteer
-        //
-        // - headless: false  → visible browser window for debugging and human-like
-        // - userDataDir       → persistent session folder
-        // - args              → sandbox and automation flags for compatibility
-        // - defaultViewport   → null to use full window dimensions
-        // -------------------------------------------------------------------------
-        browser = await puppeteer.launch({
-            headless: false,
-            userDataDir,
-            args: [
-                '--no-sandbox',                         // disable sandbox for local testing
-                '--disable-setuid-sandbox',             // disable setuid sandbox helper
-                '--disable-blink-features=AutomationControlled', // hide automation flag
-            ],
-            defaultViewport: null,
-        });
-
-        console.log('🔗 Opening new page…');
         page = await browser.newPage();
+        // Set a realistic user agent
+        await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36');
 
-        // -------------------------------------------------------------------------
-        // 3) Authentication check
-        //
-        // Use our helper to inspect sessionStorage; if not logged in, perform the
-        // basic email & pass auth login flow. This avoids unnecessary re-authentication.
-        // -------------------------------------------------------------------------
-        if (await isChatGPTLoggedIn(page)) {
-            console.log('✅ Already signed in — skipping login flow.');
-        } else {
-            console.log('🔐 Not signed in — running login flow…');
-            await performLoginWithBasicAuth(page);
-        }
+        console.log(`Navigating to: ${url}`);
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
 
-        // -------------------------------------------------------------------------
-        // 4) Send prompt with reuse of existing conversation thread (if any)
-        //
-        // We pass prompt + optional modes (`search`, `reason`) and the threadId.
-        // ChatGPT will continue the conversation in the specified thread if provided.
-        // -------------------------------------------------------------------------
-        const prompt = "based on researching forbes data who are the top 10 richest person in vietnam as of may 2025";
-        const options = {
-            search: true,
-            reason: true,
-            // threadId: '681a6cba-c0fc-8004-977c-f34adf806988'
-        }
-        const responseObject = await promptWithOptions(page, options, prompt);
-        if (responseObject === null) {
-            console.error('❌ No response or valid paragraph response received from ChatGPT.');
-            // handle error: retry, exit, default value, etc.
-        } else {
-            const { threadId: returnedThreadId, response } = responseObject;
-            console.log('📬 ChatGPT replied:', response);
-            console.log('📌 Conversation ID:', returnedThreadId);
-            // proceed with valid response and potentially save threadId for next run
-        }
+        // Wait for the phone number element to appear.
+        await page.waitForSelector(PHONE_NUMBER_SELECTOR, { timeout: 10000 });
 
+        // Extract the 'aria-label' which contains the phone number.
+        const phoneNumberAriaLabel = await page.$eval(PHONE_NUMBER_SELECTOR, el => el.getAttribute('aria-label'));
 
-        console.log('✅ Automation flow complete.');
+        // Clean the extracted text to get just the number.
+        const phoneNumber = phoneNumberAriaLabel ? phoneNumberAriaLabel.replace('Phone:', '').trim() : 'Not Found';
+
+        console.log(`Found phone number: ${phoneNumber}`);
+        return phoneNumber;
 
     } catch (error) {
-        // -------------------------------------------------------------------------
-        // Error handling: log the error and the last known page URL for debugging
-        // -------------------------------------------------------------------------
-        console.error('❌ An error occurred in the main process:', error);
-        if (page) {
-            console.error('Last page URL at error time:', page.url());
-        }
+        console.error(`Could not scrape phone number from ${url}. Error: ${error.message}`);
+        return 'Not Found';
     } finally {
-        // -------------------------------------------------------------------------
-        // Finalization: we leave the browser open so you can inspect the session.
-        // To close it programmatically, uncomment the line below.
-        // -------------------------------------------------------------------------
-        console.log('🏁 Script finished.');
-        await browser?.close();
+        if (page) {
+            await page.close();
+        }
     }
 }
 
-// Kick off the automation
-openGPT();
+/**
+ * Main function to run the scraper.
+ */
+async function main() {
+    console.log('Starting the scraping process...');
+
+    // --- Updated Browser Launch Configuration ---
+    // Launch puppeteer with settings from your working example
+    // to improve compatibility and avoid detection.
+    const browser = await puppeteer.launch({
+        // Set to 'true' for background operation, 'false' to see the browser window.
+        headless: false,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-blink-features=AutomationControlled', // Hides the automation flag
+        ],
+    });
+
+    const results = [];
+
+    fs.createReadStream(INPUT_CSV_PATH)
+        .pipe(csv())
+        .on('data', (data) => results.push(data))
+        .on('end', async () => {
+            console.log(`CSV file successfully processed. Found ${results.length} rows.`);
+
+            const updatedLeads = [];
+
+            // Loop through each row from the CSV file
+            for (let i = 0; i < results.length; i++) {
+                const row = results[i];
+                // Use the correct column names from your CSV
+                const originalPhoneNumber = row['Phone Number'];
+                const socialLink = row['Social Link'];
+
+                console.log(`\nProcessing row ${i + 1}/${results.length}...`);
+
+                const scrapedPhoneNumber = await scrapePhoneNumber(browser, socialLink);
+
+                updatedLeads.push({
+                    'Original Phone Number': originalPhoneNumber,
+                    'Social Link': socialLink,
+                    'Scraped Phone Number': scrapedPhoneNumber,
+                });
+            }
+
+            await browser.close();
+            console.log('\nBrowser closed.');
+
+            // Write the updated data to the new CSV file.
+            const csvStream = format({ headers: true });
+            const writeStream = fs.createWriteStream(OUTPUT_CSV_PATH);
+
+            writeStream.on('finish', () => {
+                console.log(`\nScraping complete! Updated data saved to ${OUTPUT_CSV_PATH}`);
+            });
+
+            csvStream.pipe(writeStream);
+            updatedLeads.forEach(lead => csvStream.write(lead));
+            csvStream.end();
+        });
+}
+
+main().catch(console.error);

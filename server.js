@@ -7,8 +7,8 @@ const PORT = process.env.PORT || 3001;
 const server = express();
 
 //we require app.js as it handles all the routes
-const routesHandler = require('./routes');
-const { initializePage } = require('./src/services/puppeteer-services');
+const routesHandler = require('./src/router');
+const { initializePage } = require('./src/services/puppeteerService');
 
 //app is a middleware fn which is included here i.e. it is used in server but the code is defined else where but we use it here
 server.use(routesHandler);

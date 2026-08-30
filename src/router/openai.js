@@ -1,7 +1,7 @@
 const express = require('express');
-const {performLoginWithBasicAuth} = require('../flows/basic-login');
-const { getPage } = require('../services/puppeteer-services');
-const { promptWithOptions } = require('../flows/prompt-flow');
+const {performLoginWithBasicAuth} = require('../flows/openai_emailAuth');
+const { getPage } = require('../services/puppeteerService');
+const { promptWithOptions } = require('../flows/openai_promptFlow');
 const { isChatGPTLoggedIn } = require('../utils/helpers');
 
 //import logger
@@ -12,8 +12,8 @@ const logger = getLogger("prompt.js");
 const promptRouter = express.Router();
 
 //handle POST request for login
-promptRouter.post('/',async (req,res,next)=> {
-    logger.debug("POST:/api/prompt","In prompt post request...");
+promptRouter.post('/prompt', async (req,res,next)=> {
+    logger.debug("POST:/api/openai/prompt","In prompt post request...");
 
     //retrieve input passed from client
     const {prompt,options = {}} = req.body; //defaults options to null obj

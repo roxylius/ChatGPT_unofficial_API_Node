@@ -38,12 +38,15 @@ async function isChatGPTLoggedIn(page) {
     try {
       // Request current auth session; includes cookies for proper context
       const res = await fetch('https://chatgpt.com/api/auth/session', { credentials: 'include' });
+      console.log("isChatGPTLoggedIn", "Fetch response status:", res.status);
+      
       if (!res.ok) return {};          // Non-200 → no session
       return await res.json();         // Parsed session object
     } catch {
       return {};                       // Network/error → treat as not logged in
     }
   });
+
   // Non-empty object indicates authenticated session
   return session && Object.keys(session).length > 0;
 }
