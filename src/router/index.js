@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 
 //express routers to handle route
 const promptRouter = require('./openai');
+const v1Router = require('./v1');
 
 const app = express();
 
@@ -14,6 +15,10 @@ app.use(express.json()); //to interpret json
 
 //Routes
 app.use('/api/openai/',promptRouter);
+
+//OpenAI-compatible surface (/v1/chat/completions, /v1/models) — point any
+//OpenAI SDK's base URL at http://<host>:<port>/v1
+app.use('/v1', v1Router);
 
 
 app.get('/',(req,res) => {

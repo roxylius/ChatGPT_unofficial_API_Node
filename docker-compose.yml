@@ -1,0 +1,29 @@
+services:
+  chatgpt-api:
+    build: .
+    ports:
+      - "3001:3001"
+    env_file:
+      - .env
+    environment:
+      PORT: 3001
+      # Uncomment to require `Authorization: Bearer <key>` on /v1/* routes.
+      # API_KEY: sk-your-own-secret
+
+      # Set true to run Chrome headless instead of under Xvfb — smaller/
+      # faster, but ChatGPT's bot detection is more likely to reject login.
+      # PUPPETEER_HEADLESS: "true"
+    volumes:
+      # Persists the logged-in Chrome profile across container restarts —
+      # without this, every restart re-runs the login flow.
+      - chrome-user-data:/app/chrome-user-data
+      - logs:/app/logs
+    # Chrome writes shared memory under /tmp instead of /dev/shm (see
+    # --disable-dev-shm-usage in puppeteerService.js), but a larger /dev/shm
+    # is cheap insurance against renderer crashes under load.
+    shm_size: "1gb"
+    restart: unless-stopped
+
+volumes:
+  chrome-user-data:
+  logs:

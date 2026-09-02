@@ -3,6 +3,7 @@ const {performLoginWithBasicAuth} = require('../flows/openai_emailAuth');
 const { getPage } = require('../services/puppeteerService');
 const { promptWithOptions } = require('../flows/openai_promptFlow');
 const { isChatGPTLoggedIn } = require('../utils/helpers');
+const { withPageLock } = require('../utils/pageLock');
 
 //import logger
 const {getLogger} = require('../utils/logger');
@@ -18,17 +19,21 @@ promptRouter.post('/prompt', async (req,res,next)=> {
     //retrieve input passed from client
     const {prompt,options = {}} = req.body; //defaults options to null obj
 
-    //get puppeteer page instance
-    const page = getPage();
+    //shares the browser page with /v1 routes, so route both through the
+    //same lock or a request there can interleave with one here
+    const response = await withPageLock(async () => {
+        //get puppeteer page instance
+        const page = getPage();
 
-    if (await isChatGPTLoggedIn(page)) {
-        logger.debug("POST:/api/prompt",'✅ Already signed in — skipping login flow.');
-    } else {
-        logger.debug("POST:/api/prompt",'🔐 Not signed in — running login flow…');
-        await performLoginWithBasicAuth(page);
-    }
+        if (await isChatGPTLoggedIn(page)) {
+            logger.debug("POST:/api/prompt",'✅ Already signed in — skipping login flow.');
+        } else {
+            logger.debug("POST:/api/prompt",'🔐 Not signed in — running login flow…');
+            await performLoginWithBasicAuth(page);
+        }
 
-    const response = await promptWithOptions(page,options,prompt);
+        return promptWithOptions(page,options,prompt);
+    });
 
     res.status(200).json(response);
 

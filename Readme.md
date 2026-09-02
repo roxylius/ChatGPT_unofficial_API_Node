@@ -140,29 +140,109 @@ Sample Response:
 
 > **Note:** Response times may vary based on prompt complexity and ChatGPT’s server load. Parsing may occasionally be inconsistent, particularly in Reason mode.
 
+## 🔌 OpenAI-Compatible API (`/v1`)
+
+In addition to the native `/api/openai/prompt` endpoint above, the server exposes an OpenAI-compatible surface so you can point any existing OpenAI SDK / client at it as a drop-in base URL.
+
+```
+Base URL: http://localhost:3001/v1
+```
+
+```js
+import OpenAI from "openai";
+
+const client = new OpenAI({
+  baseURL: "http://localhost:3001/v1",
+  apiKey: "not-needed-unless-you-set-API_KEY", // any string, or your API_KEY
+});
+
+const completion = await client.chat.completions.create({
+  model: "gpt-4o",
+  messages: [{ role: "user", content: "Tell me a joke" }],
+});
+
+console.log(completion.choices[0].message.content);
+```
+
+#### GET /v1/models
+
+Returns a static list of model ids for client compatibility (`gpt-4o`, `gpt-4o-search`, `gpt-4o-reason`, `gpt-4`, `gpt-3.5-turbo`).
+
+#### POST /v1/chat/completions
+
+Standard OpenAI request/response shape: `{ model, messages, stream }` in, an OpenAI `chat.completion` (or `chat.completion.chunk` SSE stream, if `stream: true`) object out, including a `usage` block with estimated token counts.
+
+- **Reason / Search modes** — since the OpenAI schema has no field for these, pick them via the model name: `gpt-4o-reason` or `gpt-4o-search` (or any model id containing `reason`/`search`, e.g. `o1`, `o3`).
+- **Streaming** — the underlying automation only ever returns the fully-settled response text (it polls the page until the text stops changing), so `stream: true` re-chunks that final text into word-sized SSE deltas rather than true token-by-token generation. Clients built for SSE still work correctly; just don't expect lower latency-to-first-token from it.
+- **Thread continuity** — the API is otherwise stateless like OpenAI's, but each response includes a non-standard `thread_id` field with the underlying ChatGPT conversation id. The server also *best-effort* remembers threads across calls (matched by hashing the message history), so a normal "send full history back" chat loop will usually keep reusing the same ChatGPT thread automatically. To force it, pass `thread_id` explicitly in the request body.
+- **Auth** — unauthenticated by default (matches the rest of this project's local-use posture). Set `API_KEY` in `.env` to require `Authorization: Bearer <API_KEY>` on all `/v1/*` routes.
+- **Concurrency** — there's only one shared browser page under the hood, so `/api/openai/prompt` and `/v1/chat/completions` requests are queued and processed one at a time, not run in parallel.
+
+## 🐳 Docker
+
+```bash
+# 1. Configure credentials
+cp .env.example .env
+# edit .env: set OPENAI_EMAIL / OPENAI_PASSWORD (and optionally API_KEY)
+
+# 2. Build & run
+docker compose up --build
+```
+
+The server is then reachable at `http://localhost:3001` (native API) and `http://localhost:3001/v1` (OpenAI-compatible API), exactly as when run with `node server.js` locally.
+
+**Why Docker needs a virtual display:** this project intentionally runs Chrome headful (not headless) to avoid ChatGPT's bot detection — see the comment in `src/services/puppeteerService.js`. Since a container has no physical display, `docker-entrypoint.sh` starts Chrome under [Xvfb](https://en.wikipedia.org/wiki/Xvfb), a virtual X server, before launching the app — no code changes needed, this happens automatically. Set `PUPPETEER_HEADLESS=true` in `.env` to skip Xvfb and run headless instead (smaller/faster, but more likely to trip login/prompt detection).
+
+**Session persistence:** `docker-compose.yml` mounts a named volume over `/app/chrome-user-data`, the same directory Puppeteer already persists cookies/localStorage to (see the directory tree below). This means you generally only have to sit through the login flow once — subsequent container restarts reuse the saved session. Without that volume, every restart re-triggers `performLoginWithBasicAuth`.
+
+**Manual `docker build` / `docker run`** (equivalent to the compose file above, if you'd rather not use Compose):
+
+```bash
+docker build -t chatgpt-unofficial-api .
+
+docker run -d \
+  --name chatgpt-api \
+  -p 3001:3001 \
+  --shm-size=1gb \
+  --env-file .env \
+  -v chatgpt-chrome-user-data:/app/chrome-user-data \
+  -v chatgpt-logs:/app/logs \
+  chatgpt-unofficial-api
+```
+
+> **Note:** as with running this locally, headful browser automation against ChatGPT's login flow is inherently fragile — CAPTCHAs, 2FA, or new anti-bot checks can still interrupt the automated login inside the container. If it fails and you need to intervene visually, connect to the container's Chrome over its remote-debugging port with a VNC/noVNC setup, or run the equivalent flow outside Docker once to get familiar with the login UI it automates before troubleshooting the containerized version.
+
 ## 📂 Key Components & Dictory Tree
 
 ```
 .
-├── chrome-user-data/      # Persists browser session data (cookies, localStorage)
+├── chrome-user-data/      # Persists browser session data (cookies, localStorage) — Docker volume
+├── logs/                  # log4js output — Docker volume
 ├── src/
+│   ├── configs/
+│   │   └── log4js-config.json  # Logger config
 │   ├── flows/
-│   │   ├── basic-login.js   # Handles email/password login automation
-│   │   └── prompt-flow.js   # Handles sending prompts and polling for responses
+│   │   ├── openai_emailAuth.js   # Handles email/password login automation
+│   │   └── openai_promptFlow.js  # Handles sending prompts and polling for responses
+│   ├── router/
+│   │   ├── index.js        # Mounts /api/openai and /v1 routers, CORS/body-parser middleware
+│   │   ├── openai.js       # Native POST /api/openai/prompt route
+│   │   └── v1.js            # OpenAI-compatible /v1/chat/completions + /v1/models routes
 │   ├── services/
-│   │   └── puppeteer-services.js # Manages shared Puppeteer browser and page instances
-│   ├── utils/
-│   │   └── helpers.js       # Utility functions (e.g., login check, timeouts)
-│   └── views/
-│       ├── login.js         # Express router for login-related endpoints
-│       └── prompt.js        # Express router for prompt-related endpoints
-├── .env                   # Environment variables (OpenAI credentials, Port)
+│   │   └── puppeteerService.js # Manages shared Puppeteer browser and page instance
+│   └── utils/
+│       ├── helpers.js       # Utility functions (e.g., login check, HTML→text, timeouts)
+│       ├── logger.js        # log4js wrapper
+│       └── pageLock.js      # Serializes requests against the single shared page
+├── .env                   # Environment variables (OpenAI credentials, Port, API_KEY)
 ├── .env.example           # Example environment file
+├── docker-compose.yml     # Build + run with persistent volumes
+├── Dockerfile             # Headful Chrome + Xvfb image (see 🐳 Docker section)
+├── docker-entrypoint.sh   # Starts Xvfb, then the app
 ├── example-test.js        # Standalone test script for Puppeteer automation
 ├── feature.md             # List of features and bug fixes
 ├── insights.md            # Important notes and observations
 ├── package.json           # Project metadata and dependencies
-├── routes.js              # Main Express router configuration
 ├── server.js              # Main application entry point, starts Express server and Puppeteer
 └── README.md              # This file
 ```

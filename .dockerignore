@@ -1,0 +1,16 @@
+node_modules
+npm-debug.log*
+chrome-user-data
+logs
+*.log
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+insights.md
+feature.md
+example-test.js
+Dockerfile
+docker-compose.yml
+.dockerignore
