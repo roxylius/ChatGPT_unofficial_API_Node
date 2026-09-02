@@ -12,18 +12,29 @@ async function initializePage() {
     if (!browserInstance) {
         console.log('▶️ Launching browser with persistent profile…');
 
-        const userDataDir = path.join(__dirname, '..', '..', 'chrome-user-data');
+        const userDataDir = process.env.CHROME_USER_DATA_DIR || path.join(__dirname, '..', '..', 'chrome-user-data');
 
-        const windowWidth = 1920; // Example: Full HD width
-        const windowHeight = 540;  // Example: Half of Full HD height
+        const windowWidth = Number(process.env.PUPPETEER_WINDOW_WIDTH) || 1920; // Example: Full HD width
+        const windowHeight = Number(process.env.PUPPETEER_WINDOW_HEIGHT) || 540;  // Example: Half of Full HD height
+
+        // Headful Chrome is deliberately preferred here — OpenAI's bot
+        // detection flags headless sessions far more aggressively, so this
+        // stays `false` by default even in Docker (run under Xvfb, see
+        // docker-entrypoint.sh). Set PUPPETEER_HEADLESS=true to opt into
+        // headless anyway (less reliable login/prompting).
+        const headless = process.env.PUPPETEER_HEADLESS === 'true' ? 'new' : false;
 
         browserInstance = await puppeteer.launch({
-            headless: false,
+            headless,
             userDataDir,
+            // Lets Docker images that ship system Chromium (instead of
+            // Puppeteer's bundled download) point at it.
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
             args: [
                 '--no-sandbox',                         // disable sandbox for local testing
                 '--disable-setuid-sandbox',             // disable setuid sandbox helper
                 '--disable-blink-features=AutomationControlled', // hide automation flag
+                '--disable-dev-shm-usage',              // avoid /dev/shm exhaustion in containers
                 `--window-size=${windowWidth},${windowHeight}`, // Set window size
                 '--window-position=0,0',                // Set window position to top-left
             ],
